@@ -26,7 +26,7 @@ class EbookGenerator:
             logger.error("Calibre command-line tools are not installed or not in PATH")
             raise RuntimeError("Calibre command-line tools are required but not found")
     
-    def create_recipe_file(self, feeds_data: Dict[str, Any], output_dir: str, test_mode: bool = False) -> str:
+    def create_recipe_file(self, feeds_data: Dict[str, Any], output_dir: str, test_mode: bool = False, max_articles: int = 10) -> str:
         """
         Create a Calibre recipe file from the feeds data.
         Returns the path to the created recipe file.
@@ -54,7 +54,6 @@ class DayNewsRecipe(BasicNewsRecipe):
         
         # In test mode, only use the first feed and limit articles
         feed_list = feeds_data['feeds'][:1] if test_mode else feeds_data['feeds']
-        max_articles = 1 if test_mode else 10
         
         # Create feeds list with proper escaping
         feeds_formatted = []
