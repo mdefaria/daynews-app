@@ -26,7 +26,7 @@ def main():
     parser.add_argument('--send-email', action='store_true', help='Send email with e-book')
     parser.add_argument('--low-memory', action='store_true', help='Use low memory settings (recommended for Raspberry Pi)')
     parser.add_argument('--max-articles', type=int, default=10, help='Maximum articles per feed')
-    parser.add_argument('--timeout', type=int, default=600, help='Timeout for ebook generation in seconds')
+    parser.add_argument('--timeout', type=int, default=900, help='Timeout for ebook generation in seconds')
     args = parser.parse_args()
     
     try:
