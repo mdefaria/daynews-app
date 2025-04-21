@@ -33,72 +33,68 @@ class EbookGenerator:
         """
         recipe_path = os.path.join(output_dir, "daynews_recipe.recipe")
         
-        # Set parameters based on mode
-        if test_mode:
-            max_articles_per_feed = 1  # Just 1 article in test mode
-            fetch_delay = 0.1  # Minimal delay
-            logger.info("Creating recipe with TEST MODE settings (1 article per feed)")
-        else:
-            max_articles_per_feed = 10  # Regular mode
-            fetch_delay = 0.2  # Regular delay
-        
-        recipe_content = f"""
-#!/usr/bin/env python
+        # Use extremely simple recipe format to avoid syntax issues
+        recipe_content = """#!/usr/bin/env python
 # vim:fileencoding=utf-8
 
 from calibre.web.feeds.recipes import BasicNewsRecipe
 
 class DayNewsRecipe(BasicNewsRecipe):
-    title = '{"[TEST] " if test_mode else ""}{feeds_data["title"]}'
+    title = '{title}'
     oldest_article = 1
-    max_articles_per_feed = {max_articles_per_feed}
+    max_articles_per_feed = {max_articles}
     auto_cleanup = True
-    
-    # Optimization settings
-    simultaneous_downloads = {'1' if test_mode else '2'}
-    delay = {fetch_delay}  # Delay between fetches
-    timefmt = ''  # Skip date formatting to save processing
     no_stylesheets = True
     remove_javascript = True
-    scale_news_images = {'(200, 200)' if test_mode else '(400, 400)'}
-    
-    # Test mode optimizations
-    {'summary_length = 100  # Very short summaries in test mode' if test_mode else ''}
     
     feeds = [
+{feeds_list}
+    ]
 """
         
-        # In test mode, only use the first feed
+        # In test mode, only use the first feed and limit articles
         feed_list = feeds_data['feeds'][:1] if test_mode else feeds_data['feeds']
+        max_articles = 1 if test_mode else 10
         
+        # Create feeds list with proper escaping
+        feeds_formatted = []
         for feed in feed_list:
-            recipe_content += f"        ('{feed['title']}', '{feed['url']}'),\n"
+            # Properly escape single quotes in title and URL
+            title = feed['title'].replace("'", "\\'")
+            url = feed['url'].replace("'", "\\'")
+            feeds_formatted.append(f"        ('{title}', '{url}')")
         
-        recipe_content += "    ]"
+        feeds_list_str = ",\n".join(feeds_formatted)
         
+        # Format the recipe with our values
+        recipe_content = recipe_content.format(
+            title="[TEST] DayNews" if test_mode else "DayNews Daily Digest",
+            max_articles=max_articles,
+            feeds_list=feeds_list_str
+        )
+        
+        # Write recipe to file
         with open(recipe_path, 'w') as f:
             f.write(recipe_content)
-            
-        logger.info(f"Created recipe file at {recipe_path} with {'TEST' if test_mode else 'NORMAL'} settings")
-        return recipe_path
         
+        # Debug: Print the recipe content for verification
+        if test_mode:
+            logger.debug("TEST MODE: Generated recipe content:")
+            logger.debug(recipe_content)
+            print("\n[TEST MODE] Recipe file content:")
+            print("-----------------------------------")
+            print(recipe_content[:500] + "..." if len(recipe_content) > 500 else recipe_content)
+            print("-----------------------------------")
+        
+        logger.info(f"Created recipe file at {recipe_path}")
+        return recipe_path
+
     def generate_ebook(self, recipe_path: str, output_path: str, 
                        low_memory: bool = True, timeout: int = 300,
                        max_articles: int = 10, image_size: int = 400,
                        show_progress: bool = True, test_mode: bool = False) -> str:
-        """
-        Generate an EPUB file from a Calibre recipe.
-        Returns the path to the generated EPUB file.
-        """
+        """Generate an EPUB file from a Calibre recipe."""
         try:
-            if test_mode:
-                logger.info("Generating ebook in TEST MODE (minimal content)")
-                if show_progress:
-                    print("\n[TEST MODE] Generating minimal ebook with 1 feed and 1 article")
-                    print("This should be much faster than normal mode.")
-            else:
-                logger.info(f"Generating ebook using recipe {recipe_path}")
-            
             # Verify recipe file exists
             if not os.path.isfile(recipe_path):
                 error_msg = f"Recipe file not found: {recipe_path}"
@@ -111,56 +107,58 @@ class DayNewsRecipe(BasicNewsRecipe):
                 os.makedirs(output_dir)
                 logger.info(f"Created output directory: {output_dir}")
                 
-            # Use simpler, more reliable command options
-            cmd = [
-                'ebook-convert', 
-                recipe_path, 
-                output_path,
-                '--verbose'  # Keep this for debugging
-            ]
-            
-            # Add minimal optimizations that are widely supported
-            if low_memory or test_mode:  # Always use low memory settings in test mode
-                cmd.extend([
-                    '--output-profile', 'mobile',
-                    '--no-process-images'
-                ])
-                
-            # Add test-specific flags
+            # Use the absolute minimal command for testing first
             if test_mode:
-                cmd.extend([
-                    '--timeout', '10',  # Very short timeout per fetch in test mode
-                    '--max-toc-links', '1'  # Minimal TOC for testing
-                ])
+                # Try running with basic recipe first
+                cmd = [
+                    'ebook-convert',
+                    recipe_path,
+                    output_path
+                ]
+            else:
+                # Regular command with optimizations
+                cmd = [
+                    'ebook-convert',
+                    recipe_path, 
+                    output_path,
+                    '--verbose'
+                ]
                 
+                # Add minimal optimizations that are widely supported
+                if low_memory:
+                    cmd.extend([
+                        '--output-profile', 'mobile',
+                        '--no-process-images'
+                    ])
+            
+            # Display command
             if show_progress:
-                print("Starting ebook generation. This may take several minutes...")
-                print("Running command:", " ".join(cmd))
+                print(f"\nRunning command: {' '.join(cmd)}")
                 sys.stdout.flush()
-                
+            
             logger.debug(f"Running command: {' '.join(cmd)}")
             
-            # First, try running with --help to verify command works at all
+            # Check if recipe file is readable
+            if not os.access(recipe_path, os.R_OK):
+                logger.error(f"Recipe file is not readable: {recipe_path}")
+                raise PermissionError(f"Cannot read recipe file: {recipe_path}")
+                
+            # Check Calibre version directly
             try:
-                help_result = subprocess.run(
-                    ['ebook-convert', '--help'],
+                version_result = subprocess.run(
+                    ['ebook-convert', '--version'],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     timeout=5
                 )
-                if help_result.returncode != 0:
-                    logger.warning(f"ebook-convert --help returned non-zero exit code: {help_result.returncode}")
-                    logger.warning(f"stderr: {help_result.stderr}")
-                else:
-                    logger.debug("ebook-convert --help ran successfully")
+                logger.debug(f"Calibre version: {version_result.stdout.strip()}")
+                if show_progress and test_mode:
+                    print(f"Calibre version: {version_result.stdout.strip()}")
             except Exception as e:
-                logger.warning(f"Error when testing ebook-convert: {str(e)}")
+                logger.warning(f"Could not determine Calibre version: {str(e)}")
                 
-            # Run process with real-time output monitoring
-            start_time = time.time()
-            
-            # Enhanced process handling
+            # Run ebook-convert command
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -170,6 +168,7 @@ class DayNewsRecipe(BasicNewsRecipe):
             )
             
             # Variables to track progress
+            start_time = time.time()
             feeds_processed = 0
             last_update = time.time()
             stdout_data = []

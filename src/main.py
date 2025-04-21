@@ -4,6 +4,7 @@ import logging
 import json
 import datetime
 import argparse
+import subprocess
 from feed_manager import FeedManager
 from ebook_generator import EbookGenerator
 from email_sender import EmailSender
@@ -27,13 +28,21 @@ def main():
     parser.add_argument('--low-memory', action='store_true', help='Use low memory settings (recommended for Raspberry Pi)')
     parser.add_argument('--max-articles', type=int, default=10, help='Maximum articles per feed')
     parser.add_argument('--timeout', type=int, default=900, help='Timeout for ebook generation in seconds')
+    parser.add_argument('--debug', action='store_true', help='Show debug information')
     args = parser.parse_args()
+    
+    # Set more verbose logging if debug mode
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
     
     try:
         # Display prominent test mode message
         if args.test:
             print("\n===== RUNNING IN TEST MODE =====")
             print("• Using minimal content for faster processing")
+            print("• Working with a known-good feed for reliability")
+            print("• Using simplified ebook-convert options")
             print("• Email will be sent in dry-run mode\n")
             logger.info("Starting DayNews process in TEST MODE")
             # Override settings for test mode
@@ -85,7 +94,7 @@ def main():
             output_path=epub_path,
             low_memory=args.low_memory,
             timeout=args.timeout,
-            max_articles=1 if args.test else args.max_articles,  # Use 1 article in test mode
+            max_articles=1 if args.test else args.max_articles,
             show_progress=True,
             test_mode=args.test
         )
@@ -116,6 +125,15 @@ def main():
     except FileNotFoundError as e:
         logger.error(f"File not found: {str(e)}", exc_info=True)
         print(f"ERROR: {str(e)}")
+        return 1
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command failed: {e.cmd}")
+        logger.error(f"Return code: {e.returncode}")
+        if e.stdout:
+            logger.error(f"Output: {e.stdout}")
+        if e.stderr:
+            logger.error(f"Error: {e.stderr}")
+        print(f"ERROR: Command failed with return code {e.returncode}")
         return 1
     except Exception as e:
         logger.error(f"Error in DayNews process: {str(e)}", exc_info=True)
