@@ -84,17 +84,26 @@ def main():
             logger.error("No valid feeds could be fetched")
             raise ValueError("No feeds to process - please check your feeds.json file")
         
+        # Determine max_articles value to use
+        max_articles_to_use = 1 if args.test else args.max_articles
+        logger.info(f"Using max_articles={max_articles_to_use} for recipe generation")
+        
         logger.info(f"Creating recipe file with {len(feeds_data['feeds'])} feeds...")
-        recipe_path = ebook_generator.create_recipe_file(feeds_data, output_dir, test_mode=args.test)
+        recipe_path = ebook_generator.create_recipe_file(
+            feeds_data, 
+            output_dir, 
+            max_articles=max_articles_to_use,
+            test_mode=args.test
+        )
         
         # Generate EPUB from recipe with proper parameters
-        logger.info("Generating ebook...")
+        logger.info(f"Generating ebook with max_articles={max_articles_to_use}...")
         ebook_generator.generate_ebook(
             recipe_path=recipe_path, 
             output_path=epub_path,
             low_memory=args.low_memory,
             timeout=args.timeout,
-            max_articles=1 if args.test else args.max_articles,
+            max_articles=max_articles_to_use,
             show_progress=True,
             test_mode=args.test
         )
