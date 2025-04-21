@@ -90,19 +90,19 @@ class DayNewsRecipe(BasicNewsRecipe):
         try:
             logger.info(f"Generating ebook using recipe {recipe_path}")
             
-            # Base conversion command with more aggressive optimizations
+            # Base conversion command with corrected syntax
             cmd = [
                 'ebook-convert', 
                 recipe_path, 
                 output_path,
-                '--output-profile=mobile',
-                f'--max-toc-links={max_articles}',
-                '--verbose',  # Required to see progress
-                f'--rescale-images={image_size}x{image_size}',
+                '--output-profile', 'mobile',  # Fixed format (separate arguments)
+                '--max-toc-links', str(max_articles),
+                '--verbose',
+                '--rescale-images', str(image_size),  # Removed 'x' format
                 '--linearize-tables',
-                '--timeout=10',  # Timeout per fetch in seconds
-                '--test',  # Only download a few articles for testing
-                '--base-font-size=10',  # Smaller font size
+                '--timeout', '10',
+                # Removed --test flag (not valid for ebook-convert)
+                '--base-font-size', '10'
             ]
             
             # Add low memory optimizations if requested
@@ -111,7 +111,7 @@ class DayNewsRecipe(BasicNewsRecipe):
                     '--no-process-images',
                     '--disable-font-rescaling',
                     '--dont-compress',
-                    '--keep-ligatures',  # Skip ligature processing
+                    '--keep-ligatures'
                 ])
             
             # Add progressive mode settings
@@ -131,7 +131,7 @@ class DayNewsRecipe(BasicNewsRecipe):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1  # Line buffered
+                bufsize=1
             )
             
             # Variables to track progress
@@ -147,7 +147,7 @@ class DayNewsRecipe(BasicNewsRecipe):
                     process.terminate()
                     raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
                 
-                # Read available output (non-blocking)
+                # Check for stdout output
                 if process.stdout:
                     line = process.stdout.readline()
                     if line:
@@ -165,7 +165,16 @@ class DayNewsRecipe(BasicNewsRecipe):
                             print("C", end="", flush=True)
                         
                         # Keep more detailed logs in debug
-                        logger.debug(line.strip())
+                        logger.debug(f"STDOUT: {line.strip()}")
+                
+                # Check for stderr output - important for error diagnosis
+                if process.stderr:
+                    err_line = process.stderr.readline()
+                    if err_line:
+                        logger.debug(f"STDERR: {err_line.strip()}")
+                        # Print errors in real-time if showing progress
+                        if show_progress and "error" in err_line.lower():
+                            print(f"\nERROR: {err_line.strip()}", file=sys.stderr)
                 
                 # Show heartbeat every 10 seconds
                 if show_progress and time.time() - last_update > 10:
@@ -186,6 +195,9 @@ class DayNewsRecipe(BasicNewsRecipe):
             if return_code != 0:
                 logger.error(f"Process failed with code {return_code}")
                 logger.error(f"Error output: {stderr}")
+                if show_progress:
+                    print(f"\nError: ebook-convert failed with code {return_code}")
+                    print(f"Error details: {stderr}")
                 raise subprocess.CalledProcessError(return_code, cmd, stdout, stderr)
             
             # Show final time
