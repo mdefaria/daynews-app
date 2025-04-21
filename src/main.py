@@ -30,7 +30,17 @@ def main():
     args = parser.parse_args()
     
     try:
-        logger.info("Starting DayNews process")
+        # Display prominent test mode message
+        if args.test:
+            print("\n===== RUNNING IN TEST MODE =====")
+            print("• Using minimal content for faster processing")
+            print("• Email will be sent in dry-run mode\n")
+            logger.info("Starting DayNews process in TEST MODE")
+            # Override settings for test mode
+            args.max_articles = 1
+            args.timeout = 300  # Shorter timeout for test mode
+        else:
+            logger.info("Starting DayNews process in NORMAL MODE")
         
         # Load configuration
         config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
@@ -53,7 +63,7 @@ def main():
             raise FileNotFoundError(f"Missing configuration file: {feeds_config_path}")
         
         # Initialize components
-        feed_manager = FeedManager(feeds_config_path)
+        feed_manager = FeedManager(feeds_config_path, test_mode=args.test)
         ebook_generator = EbookGenerator()
         
         # Get feeds and create recipe file
@@ -66,7 +76,7 @@ def main():
             raise ValueError("No feeds to process - please check your feeds.json file")
         
         logger.info(f"Creating recipe file with {len(feeds_data['feeds'])} feeds...")
-        recipe_path = ebook_generator.create_recipe_file(feeds_data, output_dir)
+        recipe_path = ebook_generator.create_recipe_file(feeds_data, output_dir, test_mode=args.test)
         
         # Generate EPUB from recipe with proper parameters
         logger.info("Generating ebook...")
@@ -75,8 +85,9 @@ def main():
             output_path=epub_path,
             low_memory=args.low_memory,
             timeout=args.timeout,
-            max_articles=args.max_articles,
-            show_progress=True  # Always show progress for better visibility
+            max_articles=1 if args.test else args.max_articles,  # Use 1 article in test mode
+            show_progress=True,
+            test_mode=args.test
         )
         
         # Verify file was created before attempting to send
@@ -85,6 +96,9 @@ def main():
             raise FileNotFoundError(f"Failed to generate ebook file: {epub_path}")
             
         logger.info(f"Successfully generated ebook: {epub_path}")
+        if args.test:
+            print("\n===== TEST MODE COMPLETED SUCCESSFULLY =====")
+            print(f"• Test ebook saved to: {epub_path}")
         
         # Send email with attachment if requested or not in test mode
         if args.send_email or (not args.test and not args.send_email):

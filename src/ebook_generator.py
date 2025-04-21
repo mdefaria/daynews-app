@@ -26,15 +26,21 @@ class EbookGenerator:
             logger.error("Calibre command-line tools are not installed or not in PATH")
             raise RuntimeError("Calibre command-line tools are required but not found")
     
-    def create_recipe_file(self, feeds_data: Dict[str, Any], output_dir: str) -> str:
+    def create_recipe_file(self, feeds_data: Dict[str, Any], output_dir: str, test_mode: bool = False) -> str:
         """
         Create a Calibre recipe file from the feeds data.
         Returns the path to the created recipe file.
         """
         recipe_path = os.path.join(output_dir, "daynews_recipe.recipe")
         
-        # Limit articles per feed for faster processing
-        max_articles_per_feed = 10  # Reduced from 25
+        # Set parameters based on mode
+        if test_mode:
+            max_articles_per_feed = 1  # Just 1 article in test mode
+            fetch_delay = 0.1  # Minimal delay
+            logger.info("Creating recipe with TEST MODE settings (1 article per feed)")
+        else:
+            max_articles_per_feed = 10  # Regular mode
+            fetch_delay = 0.2  # Regular delay
         
         recipe_content = f"""
 #!/usr/bin/env python
@@ -43,23 +49,29 @@ class EbookGenerator:
 from calibre.web.feeds.recipes import BasicNewsRecipe
 
 class DayNewsRecipe(BasicNewsRecipe):
-    title = '{feeds_data["title"]}'
+    title = '{"[TEST] " if test_mode else ""}{feeds_data["title"]}'
     oldest_article = 1
     max_articles_per_feed = {max_articles_per_feed}
     auto_cleanup = True
     
     # Optimization settings
-    simultaneous_downloads = 2  # Reduce to prevent memory issues
-    delay = 0.2  # Small delay between fetches to reduce load
+    simultaneous_downloads = {'1' if test_mode else '2'}
+    delay = {fetch_delay}  # Delay between fetches
     timefmt = ''  # Skip date formatting to save processing
-    no_stylesheets = True  # Skip CSS processing
-    remove_javascript = True  # Skip JS
-    scale_news_images = (400, 400)  # Smaller images
+    no_stylesheets = True
+    remove_javascript = True
+    scale_news_images = {'(200, 200)' if test_mode else '(400, 400)'}
+    
+    # Test mode optimizations
+    {'summary_length = 100  # Very short summaries in test mode' if test_mode else ''}
     
     feeds = [
 """
         
-        for feed in feeds_data['feeds']:
+        # In test mode, only use the first feed
+        feed_list = feeds_data['feeds'][:1] if test_mode else feeds_data['feeds']
+        
+        for feed in feed_list:
             recipe_content += f"        ('{feed['title']}', '{feed['url']}'),\n"
         
         recipe_content += "    ]"
@@ -67,19 +79,25 @@ class DayNewsRecipe(BasicNewsRecipe):
         with open(recipe_path, 'w') as f:
             f.write(recipe_content)
             
-        logger.info(f"Created recipe file at {recipe_path}")
+        logger.info(f"Created recipe file at {recipe_path} with {'TEST' if test_mode else 'NORMAL'} settings")
         return recipe_path
         
     def generate_ebook(self, recipe_path: str, output_path: str, 
                        low_memory: bool = True, timeout: int = 300,
                        max_articles: int = 10, image_size: int = 400,
-                       show_progress: bool = True) -> str:
+                       show_progress: bool = True, test_mode: bool = False) -> str:
         """
         Generate an EPUB file from a Calibre recipe.
         Returns the path to the generated EPUB file.
         """
         try:
-            logger.info(f"Generating ebook using recipe {recipe_path}")
+            if test_mode:
+                logger.info("Generating ebook in TEST MODE (minimal content)")
+                if show_progress:
+                    print("\n[TEST MODE] Generating minimal ebook with 1 feed and 1 article")
+                    print("This should be much faster than normal mode.")
+            else:
+                logger.info(f"Generating ebook using recipe {recipe_path}")
             
             # Verify recipe file exists
             if not os.path.isfile(recipe_path):
@@ -94,7 +112,6 @@ class DayNewsRecipe(BasicNewsRecipe):
                 logger.info(f"Created output directory: {output_dir}")
                 
             # Use simpler, more reliable command options
-            # Avoid options that might not be supported in older Calibre versions
             cmd = [
                 'ebook-convert', 
                 recipe_path, 
@@ -103,10 +120,17 @@ class DayNewsRecipe(BasicNewsRecipe):
             ]
             
             # Add minimal optimizations that are widely supported
-            if low_memory:
+            if low_memory or test_mode:  # Always use low memory settings in test mode
                 cmd.extend([
                     '--output-profile', 'mobile',
                     '--no-process-images'
+                ])
+                
+            # Add test-specific flags
+            if test_mode:
+                cmd.extend([
+                    '--timeout', '10',  # Very short timeout per fetch in test mode
+                    '--max-toc-links', '1'  # Minimal TOC for testing
                 ])
                 
             if show_progress:
@@ -244,9 +268,12 @@ class DayNewsRecipe(BasicNewsRecipe):
             total_time = time.time() - start_time
             minutes, seconds = divmod(int(total_time), 60)
             
-            logger.info(f"Successfully generated ebook at {output_path}")
+            logger.info(f"Successfully generated {'TEST ' if test_mode else ''}ebook at {output_path}")
             if show_progress:
-                print(f"\nEbook generation completed in {minutes}m {seconds}s")
+                if test_mode:
+                    print(f"\n[TEST MODE] Ebook generation completed in {minutes}m {seconds}s")
+                else:
+                    print(f"\nEbook generation completed in {minutes}m {seconds}s")
                 print(f"Ebook saved to: {output_path}")
             
             return output_path
