@@ -77,55 +77,66 @@ class DayNewsRecipe(BasicNewsRecipe):
         """
         Generate an EPUB file from a Calibre recipe.
         Returns the path to the generated EPUB file.
-        
-        Args:
-            recipe_path: Path to the Calibre recipe file
-            output_path: Path where the EPUB should be saved
-            low_memory: Whether to use low memory optimizations
-            timeout: Maximum time in seconds to allow for conversion
-            max_articles: Maximum number of articles to process
-            image_size: Maximum size for images in pixels
-            show_progress: Whether to display a progress indicator
         """
         try:
             logger.info(f"Generating ebook using recipe {recipe_path}")
             
-            # Base conversion command with corrected syntax
+            # Verify recipe file exists
+            if not os.path.isfile(recipe_path):
+                error_msg = f"Recipe file not found: {recipe_path}"
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+                
+            # Check if output directory exists, create if needed
+            output_dir = os.path.dirname(output_path)
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                logger.info(f"Created output directory: {output_dir}")
+                
+            # Use simpler, more reliable command options
+            # Avoid options that might not be supported in older Calibre versions
             cmd = [
                 'ebook-convert', 
                 recipe_path, 
                 output_path,
-                '--output-profile', 'mobile',  # Fixed format (separate arguments)
-                '--max-toc-links', str(max_articles),
-                '--verbose',
-                '--rescale-images', str(image_size),  # Removed 'x' format
-                '--linearize-tables',
-                '--timeout', '10',
-                # Removed --test flag (not valid for ebook-convert)
-                '--base-font-size', '10'
+                '--verbose'  # Keep this for debugging
             ]
             
-            # Add low memory optimizations if requested
+            # Add minimal optimizations that are widely supported
             if low_memory:
                 cmd.extend([
-                    '--no-process-images',
-                    '--disable-font-rescaling',
-                    '--dont-compress',
-                    '--keep-ligatures'
+                    '--output-profile', 'mobile',
+                    '--no-process-images'
                 ])
-            
-            # Add progressive mode settings
+                
             if show_progress:
                 print("Starting ebook generation. This may take several minutes...")
-                print("Progress indicators: '.' = downloading, 'P' = parsing, 'C' = converting")
+                print("Running command:", " ".join(cmd))
                 sys.stdout.flush()
-            
+                
             logger.debug(f"Running command: {' '.join(cmd)}")
             
+            # First, try running with --help to verify command works at all
+            try:
+                help_result = subprocess.run(
+                    ['ebook-convert', '--help'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=5
+                )
+                if help_result.returncode != 0:
+                    logger.warning(f"ebook-convert --help returned non-zero exit code: {help_result.returncode}")
+                    logger.warning(f"stderr: {help_result.stderr}")
+                else:
+                    logger.debug("ebook-convert --help ran successfully")
+            except Exception as e:
+                logger.warning(f"Error when testing ebook-convert: {str(e)}")
+                
             # Run process with real-time output monitoring
             start_time = time.time()
             
-            # Start process with pipe for stdout and stderr
+            # Enhanced process handling
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -135,9 +146,10 @@ class DayNewsRecipe(BasicNewsRecipe):
             )
             
             # Variables to track progress
-            elapsed_time = 0
             feeds_processed = 0
             last_update = time.time()
+            stdout_data = []
+            stderr_data = []
             
             # Process output in real-time
             while process.poll() is None:  # While process is still running
@@ -145,60 +157,88 @@ class DayNewsRecipe(BasicNewsRecipe):
                 elapsed_time = time.time() - start_time
                 if elapsed_time > timeout:
                     process.terminate()
-                    raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
-                
-                # Check for stdout output
+                    msg = f"Process timed out after {timeout} seconds"
+                    logger.error(msg)
+                    if show_progress:
+                        print(f"\n{msg}")
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                    
+                # Capture stdout
                 if process.stdout:
                     line = process.stdout.readline()
                     if line:
-                        # Log significant events
+                        stdout_data.append(line.strip())
+                        logger.debug(f"STDOUT: {line.strip()}")
+                        
+                        # Progress indicators
                         if "Processing feed" in line:
                             feeds_processed += 1
                             if show_progress:
                                 print(f"\nProcessing feed #{feeds_processed}...")
                                 sys.stdout.flush()
-                        if show_progress and any(x in line.lower() for x in ["downloading", "fetching", "getting"]):
-                            print(".", end="", flush=True)
-                        if show_progress and "parsing" in line.lower():
-                            print("P", end="", flush=True)
-                        if show_progress and "converting" in line.lower():
-                            print("C", end="", flush=True)
-                        
-                        # Keep more detailed logs in debug
-                        logger.debug(f"STDOUT: {line.strip()}")
+                        elif show_progress:
+                            if any(x in line.lower() for x in ["downloading", "fetching"]):
+                                print(".", end="", flush=True)
+                            elif "parsing" in line.lower():
+                                print("P", end="", flush=True)
+                            elif "converting" in line.lower():
+                                print("C", end="", flush=True)
                 
-                # Check for stderr output - important for error diagnosis
+                # Capture stderr
                 if process.stderr:
                     err_line = process.stderr.readline()
                     if err_line:
+                        stderr_data.append(err_line.strip())
                         logger.debug(f"STDERR: {err_line.strip()}")
-                        # Print errors in real-time if showing progress
-                        if show_progress and "error" in err_line.lower():
-                            print(f"\nERROR: {err_line.strip()}", file=sys.stderr)
+                        if show_progress and ("error" in err_line.lower() or "warning" in err_line.lower()):
+                            print(f"\n{err_line.strip()}", file=sys.stderr, flush=True)
                 
-                # Show heartbeat every 10 seconds
+                # Show heartbeat
                 if show_progress and time.time() - last_update > 10:
                     minutes, seconds = divmod(int(elapsed_time), 60)
                     print(f"\nStill working... Time elapsed: {minutes}m {seconds}s")
                     sys.stdout.flush()
                     last_update = time.time()
-                
-                # Sleep briefly to avoid high CPU usage
+                    
                 time.sleep(0.1)
             
             # Process has finished, get return code
             return_code = process.poll()
             
             # Get any remaining output
-            stdout, stderr = process.communicate()
-            
+            remaining_stdout, remaining_stderr = process.communicate()
+            if remaining_stdout:
+                stdout_data.extend(remaining_stdout.splitlines())
+            if remaining_stderr:
+                stderr_data.extend(remaining_stderr.splitlines())
+                
             if return_code != 0:
-                logger.error(f"Process failed with code {return_code}")
-                logger.error(f"Error output: {stderr}")
+                # Enhanced error reporting
+                error_msg = f"ebook-convert failed with exit code {return_code}"
+                logger.error(error_msg)
+                
+                # Show detailed error information
+                if stderr_data:
+                    logger.error("Error output:")
+                    for line in stderr_data:
+                        logger.error(f"  {line}")
+                        
                 if show_progress:
-                    print(f"\nError: ebook-convert failed with code {return_code}")
-                    print(f"Error details: {stderr}")
-                raise subprocess.CalledProcessError(return_code, cmd, stdout, stderr)
+                    print(f"\nError: {error_msg}")
+                    print("Error details:")
+                    for line in stderr_data[-10:]:  # Show last 10 error lines
+                        print(f"  {line}")
+                        
+                # Troubleshooting suggestions
+                print("\nTroubleshooting suggestions:")
+                print("1. Check if the recipe file is correctly formatted")
+                print("2. Verify that all URLs in the feeds are accessible")
+                print("3. Try running with fewer feeds")
+                print("4. Check if Calibre is correctly installed")
+                print("5. Try running the command manually:")
+                print(f"   {' '.join(cmd)}")
+                
+                raise subprocess.CalledProcessError(return_code, cmd)
             
             # Show final time
             total_time = time.time() - start_time
@@ -211,13 +251,15 @@ class DayNewsRecipe(BasicNewsRecipe):
             
             return output_path
             
+        except FileNotFoundError as e:
+            logger.error(f"File not found: {str(e)}")
+            raise RuntimeError(f"Failed to generate ebook: {str(e)}")
         except subprocess.TimeoutExpired:
             logger.error(f"Ebook generation timed out after {timeout} seconds")
             raise RuntimeError("Ebook generation timed out")
         except subprocess.SubprocessError as e:
             logger.error(f"Error generating ebook: {str(e)}")
-            if hasattr(e, 'stdout') and e.stdout:
-                logger.error(f"Process output: {e.stdout}")
-            if hasattr(e, 'stderr') and e.stderr:
-                logger.error(f"Process error: {e.stderr}")
+            raise RuntimeError(f"Failed to generate ebook: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
             raise RuntimeError(f"Failed to generate ebook: {str(e)}")
